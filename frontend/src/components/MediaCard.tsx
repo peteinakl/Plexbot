@@ -98,8 +98,7 @@ export const MediaCard: React.FC<Props> = ({
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-950/90 border border-sky-500/40 text-sky-200 text-[11px] font-medium backdrop-blur-sm truncate max-w-full">
                 <Users className="w-3 h-3 shrink-0" />
                 <span className="truncate">
-                  {primary.server_name}
-                  {primary.resolution ? ` · ${primary.resolution}` : ''}
+                  Shared{primary.resolution ? ` · ${primary.resolution}` : ''}
                 </span>
               </span>
             )
@@ -249,7 +248,9 @@ export const MediaCard: React.FC<Props> = ({
               title={
                 primary.source_type === 'streaming'
                   ? `Open "${item.title}" on ${primary.server_name}`
-                  : `Open on ${primary.server_name} in Plex`
+                  : primary.owned
+                    ? `Open on ${primary.server_name} in Plex`
+                    : 'Open in Plex (Shared)'
               }
               className={`py-1.5 px-2.5 rounded-lg text-xs font-medium inline-flex items-center gap-1 transition ${
                 primary.source_type === 'streaming'

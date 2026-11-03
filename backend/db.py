@@ -327,6 +327,39 @@ def json_loads_list(raw: str | None) -> list[str]:
         return []
 
 
+def sanitize_media_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Redact friend/shared Plex server names, owner usernames, section names, and machine IDs
+    from all media result payloads while preserving Local (owned) and Streaming (Netflix) labels.
+    """
+    shared_plex_total = sum(
+        1
+        for s in sources
+        if (s.get("source_type") or "plex") == "plex" and int(s.get("owned", 0)) == 0
+    )
+    shared_idx = 0
+    sanitized: list[dict[str, Any]] = []
+
+    for src in sources:
+        s = dict(src)
+        is_shared_plex = (s.get("source_type") or "plex") == "plex" and int(s.get("owned", 0)) == 0
+        if is_shared_plex:
+            shared_idx += 1
+            source_id = s.get("id")
+            s["machine_id"] = "shared"
+            s["rating_key"] = ""
+            s["section_id"] = ""
+            s["section_title"] = "Shared Library"
+            s["server_name"] = (
+                f"Shared Plex #{shared_idx}" if shared_plex_total > 1 else "Shared Plex"
+            )
+            s["owner_name"] = ""
+            s["deep_link"] = f"/api/plex/open/{source_id}" if source_id else ""
+        sanitized.append(s)
+
+    return sanitized
+
+
 def hydrate_media_row(
     row: sqlite3.Row | dict[str, Any],
     sources: list[dict[str, Any]] | None = None,
@@ -337,17 +370,19 @@ def hydrate_media_row(
     src_list = sources or []
     # Sort sources: owned local Plex first, then shared Plex servers, then streaming services (Netflix)
     res_rank = {"4K": 4, "1080p": 3, "HD": 2, "720p": 2, "SD": 1, "": 0}
-    src_list_sorted = sorted(
-        src_list,
-        key=lambda s: (
-            (1 if s.get("source_type") == "streaming" else 0)
-            if prefer_streaming
-            else (1 if s.get("source_type", "plex") == "plex" else 0),
-            int(s.get("owned", 0)),
-            res_rank.get(s.get("resolution", ""), 0),
-            -int(s.get("latency_ms", 9999)),
-        ),
-        reverse=True,
+    src_list_sorted = sanitize_media_sources(
+        sorted(
+            src_list,
+            key=lambda s: (
+                (1 if s.get("source_type") == "streaming" else 0)
+                if prefer_streaming
+                else (1 if s.get("source_type", "plex") == "plex" else 0),
+                int(s.get("owned", 0)),
+                res_rank.get(s.get("resolution", ""), 0),
+                -int(s.get("latency_ms", 9999)),
+            ),
+            reverse=True,
+        )
     )
     primary_source = src_list_sorted[0] if src_list_sorted else None
 

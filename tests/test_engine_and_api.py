@@ -413,3 +413,74 @@ def test_netflix_source_scoping_and_csv_import(temp_db: Path):
     after_titles = [it["title"] for it in after_recs]
     assert "Prisoners" not in after_titles
     assert "Roma" not in after_titles
+
+
+def test_shared_server_privacy_redaction_and_redirect(temp_db: Path):
+    _seed_sample_catalog(temp_db)
+    # Add a second friend's shared Plex server also hosting Prisoners with a custom section title
+    with db_mod.db_session(temp_db) as conn:
+        conn.execute(
+            """
+            INSERT INTO servers (machine_id, name, owned, owner_name, base_url, access_token, online, enabled, movie_count, show_count)
+            VALUES ('srv-friend-2', 'Sarah Secret Vault', 0, 'sarah_nz', 'https://sarah.plex.direct:32400', 'tok3', 1, 1, 1, 0)
+            """
+        )
+        prisoners_id = int(
+            conn.execute("SELECT id FROM media_items WHERE title = 'Prisoners'").fetchone()["id"]
+        )
+        conn.execute(
+            """
+            INSERT INTO media_sources (
+                media_id, machine_id, rating_key, section_id, section_title, resolution
+            ) VALUES (?, 'srv-friend-2', '999', '4', 'Sarah Private Movies', '1080p')
+            """,
+            (prisoners_id,),
+        )
+
+    client = TestClient(main_mod.app)
+
+    # 1. Recommendations, search, and history must NEVER expose friend server names, owners, custom sections, or machine IDs
+    recs_resp = client.get("/api/recommendations?source_scope=all_playable")
+    search_resp = client.get("/api/catalog/search?q=Prisoners")
+    hist_resp = client.get("/api/history")
+
+    for resp in (recs_resp, search_resp, hist_resp):
+        assert resp.status_code == 200
+        raw_json = resp.text
+        for secret in (
+            "Dave Shared NAS",
+            "dave",
+            "srv-friend",
+            "Sarah Secret Vault",
+            "sarah_nz",
+            "srv-friend-2",
+            "Sarah Private Movies",
+        ):
+            assert secret not in raw_json
+
+    # 2. Owned local server name IS preserved on local items
+    recs_items = recs_resp.json()["items"]
+    coherence = next(it for it in recs_items if it["title"] == "Coherence")
+    assert coherence["primary_source"]["server_name"] == "Mac Local Plex"
+    assert coherence["primary_source"]["owned"] == 1
+
+    # 3. Multi-shared item gets numbered generic labels ("Shared Plex #1", "Shared Plex #2") & opaque redirect links
+    prisoners = next(it for it in recs_items if it["title"] == "Prisoners")
+    assert [s["server_name"] for s in prisoners["sources"]] == ["Shared Plex #1", "Shared Plex #2"]
+    assert all(s["machine_id"] == "shared" for s in prisoners["sources"])
+    assert all(s["owner_name"] == "" for s in prisoners["sources"])
+    assert all(s["section_title"] == "Shared Library" for s in prisoners["sources"])
+    assert prisoners["primary_source"]["deep_link"].startswith("/api/plex/open/")
+
+    # 4. Clicking /api/plex/open/{source_id} 302-redirects cleanly to app.plex.tv
+    open_resp = client.get(prisoners["primary_source"]["deep_link"], follow_redirects=False)
+    assert open_resp.status_code == 302
+    assert open_resp.headers["location"].startswith(
+        "https://app.plex.tv/desktop#!/server/srv-friend/details?key="
+    )
+
+    # 5. Settings endpoint (/api/status -> servers) still retains real names so SettingsModal can manage them
+    status_servers = client.get("/api/status").json()["servers"]
+    server_names = {s["name"] for s in status_servers}
+    assert "Dave Shared NAS" in server_names
+    assert "Sarah Secret Vault" in server_names

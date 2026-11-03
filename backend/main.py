@@ -300,8 +300,22 @@ async def api_sync_status() -> dict[str, Any]:
 
 @app.post("/api/servers/refresh")
 async def api_refresh_servers() -> dict[str, Any]:
-    servers = await discover_and_probe_servers()
-    return {"servers": servers}
+    resolved = await discover_and_probe_servers()
+    safe_servers = [
+        {
+            "machine_id": r["machine_id"],
+            "name": r["name"],
+            "owned": bool(r["owned"]),
+            "owner_name": r["owner_name"],
+            "is_local_conn": bool(r["is_local_conn"]),
+            "is_relay": bool(r["is_relay"]),
+            "latency_ms": r["latency_ms"],
+            "online": bool(r["online"]),
+            "enabled": bool(r["enabled"]),
+        }
+        for r in resolved
+    ]
+    return {"servers": safe_servers}
 
 
 @app.post("/api/servers/{machine_id}/toggle")
@@ -647,6 +661,29 @@ async def api_import_netflix_csv(req: NetflixCSVImportRequest) -> dict[str, Any]
     except Exception as exc:
         logger.exception("Netflix CSV import failed")
         raise HTTPException(status_code=500, detail=f"CSV import failed: {exc}") from exc
+
+
+@app.get("/api/plex/open/{source_id}")
+async def api_open_plex_source(source_id: int) -> RedirectResponse:
+    with db_session() as conn:
+        row = conn.execute(
+            """
+            SELECT ms.machine_id, ms.rating_key, ms.media_id, ms.external_url, sv.source_type
+            FROM media_sources ms
+            JOIN servers sv ON sv.machine_id = ms.machine_id
+            WHERE ms.id = ?
+            """,
+            (source_id,),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Media source not found")
+    if (row["source_type"] or "plex") == "streaming":
+        url = row["external_url"] or await resolve_netflix_watch_url(int(row["media_id"]))
+        return RedirectResponse(url=url, status_code=302)
+    return RedirectResponse(
+        url=build_plex_deep_link(row["machine_id"], row["rating_key"]),
+        status_code=302,
+    )
 
 
 @app.get("/api/netflix/open/{media_id}")

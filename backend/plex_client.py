@@ -503,11 +503,12 @@ async def sync_all_servers(on_complete_hook: Any | None = None) -> dict[str, Any
         active_servers = [s for s in resolved_servers if s["online"] and s["enabled"]]
         SYNC_STATE.total_servers = len(active_servers)
         for s in resolved_servers:
+            is_owned = bool(s["owned"])
             SYNC_STATE.servers_detail[s["machine_id"]] = {
-                "machine_id": s["machine_id"],
-                "name": s["name"],
-                "owned": bool(s["owned"]),
-                "owner_name": s["owner_name"],
+                "machine_id": s["machine_id"] if is_owned else "shared",
+                "name": s["name"] if is_owned else "Shared Plex",
+                "owned": is_owned,
+                "owner_name": s["owner_name"] if is_owned else "",
                 "online": bool(s["online"]),
                 "enabled": bool(s["enabled"]),
                 "status": "queued" if (s["online"] and s["enabled"]) else ("offline" if not s["online"] else "disabled"),
@@ -525,7 +526,8 @@ async def sync_all_servers(on_complete_hook: Any | None = None) -> dict[str, Any
             async def harvest_server(srv: dict[str, Any]) -> tuple[dict[str, Any], list[tuple[str, str, dict[str, Any]]]]:
                 mid = srv["machine_id"]
                 SYNC_STATE.servers_detail[mid]["status"] = "syncing"
-                SYNC_STATE.message = f"Indexing {srv['name']}..."
+                label = srv["name"] if srv.get("owned") else "shared Plex library"
+                SYNC_STATE.message = f"Indexing {label}..."
                 collected: list[tuple[str, str, dict[str, Any]]] = []
                 async with sem:
                     sections = [

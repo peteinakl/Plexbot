@@ -293,7 +293,13 @@ export const TasteTuner: React.FC<Props> = ({
                   <div className="text-xs text-slate-400 truncate mt-0.5">
                     {item.genres.slice(0, 3).join(' · ')}
                     {item.directors.length > 0 ? ` · Dir. ${item.directors[0]}` : ''}
-                    {item.primary_source ? ` · ${item.primary_source.server_name}` : ''}
+                    {item.primary_source
+                      ? ` · ${
+                          item.primary_source.source_type === 'streaming' || item.primary_source.owned
+                            ? item.primary_source.server_name
+                            : 'Shared Plex'
+                        }`
+                      : ''}
                   </div>
                 </div>
 

@@ -253,7 +253,9 @@ export const MediaDetailModal: React.FC<Props> = ({
                 >
                   {item.primary_source.source_type === 'streaming'
                     ? `Watch on ${item.primary_source.server_name}`
-                    : `Open in Plex (${item.primary_source.server_name})`}
+                    : `Open in Plex (${
+                        item.primary_source.owned ? item.primary_source.server_name : 'Shared'
+                      })`}
                   <ExternalLink className="w-4 h-4" />
                 </a>
               )}
@@ -268,7 +270,7 @@ export const MediaDetailModal: React.FC<Props> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {item.sources.map((src) => (
                     <a
-                      key={`${src.machine_id}-${src.rating_key}`}
+                      key={src.id}
                       href={src.deep_link}
                       target="_blank"
                       rel="noopener noreferrer"
@@ -283,11 +285,17 @@ export const MediaDetailModal: React.FC<Props> = ({
                           <Users className="w-4 h-4 text-sky-400 shrink-0" />
                         )}
                         <div className="truncate">
-                          <div className="font-medium text-slate-100 truncate">{src.server_name}</div>
+                          <div className="font-medium text-slate-100 truncate">
+                            {src.source_type === 'streaming' || src.owned
+                              ? src.server_name
+                              : src.server_name || 'Shared Plex'}
+                          </div>
                           <div className="text-[11px] text-slate-400 truncate">
                             {src.source_type === 'streaming'
                               ? `${src.section_title} · Direct Stream`
-                              : `${src.section_title} · ${src.owned ? 'Your Local Server' : `Shared by ${src.owner_name}`}`}
+                              : src.owned
+                                ? `${src.section_title} · Your Local Server`
+                                : 'Shared Plex Library'}
                           </div>
                         </div>
                       </div>

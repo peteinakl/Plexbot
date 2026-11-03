@@ -202,7 +202,7 @@ async def curate_with_llm(
         },
         sort_keys=True,
     )
-    cache_key = "curate:" + hashlib.sha256(raw_key.encode()).hexdigest()[:24]
+    cache_key = "curate:v2:" + hashlib.sha256(raw_key.encode()).hexdigest()[:24]
 
     if not force_refresh:
         with db_session() as conn:
