@@ -1,10 +1,12 @@
 # Plexbot
 
-A personal, zero-commercial-bias movie & TV recommender built specifically for **Plex** — unifying both your **local Plex Media Server** and **friends' shared Plex libraries** into a single taste-driven screening room.
+A personal, zero-commercial-bias movie & TV recommender built specifically for **Plex** — unifying your **local Plex Media Server**, **friends' shared Plex libraries**, and **Netflix** into a single taste-driven screening room.
+
+![Plexbot Screenshot](docs/screenshot.png)
 
 ## Why It Beats Netflix's Algorithm
 
-1. **Unified Local + Shared Libraries**: Connects via standard Plex OAuth PIN sign-in to discover your local Mac server *and* every friend's shared Plex server, deduplicating titles across servers and showing where each pick is playable (4K / 1080p / HDR) with direct **Open in Plex** deep links.
+1. **Unified Local + Shared Libraries (Privacy-First)**: Connects via standard Plex OAuth PIN sign-in to discover your local Mac server *and* every friend's shared Plex server, deduplicating titles across servers, masking shared server names/IDs on results (`Shared · 4K` / `Shared · 1080p`), and launching directly via **Open in Plex**.
 2. **Real Implicit + Explicit Taste Signals**: Evaluates completed watches, rewatches, episode completion ratios, Plex star ratings, and **abandoned** movies/shows (things you turned off 20 minutes in), weighted across an Inverse-Document-Frequency (IDF) graph of directors, writers, cast, studios, genre pairings, eras, and plot themes.
 3. **Built for Shared Plex Accounts**: Includes **Who's Watching** modes (*Us Together*, *Just Me*, *Partner / Family*, plus custom profiles) and rapid 1-click thumbs calibration so someone else's binge doesn't skew your solo recommendations — while *Us Together* automatically vetoes anything either person disliked.
 4. **Hybrid AI Brain**: Scores tens of thousands of titles locally in milliseconds with zero API keys, and optionally pairs with **Google Gemini**, **Anthropic Claude**, or **OpenAI** for natural-language mood curation, bespoke explanations, outside-Plex discoveries, and an **AI Taste Portrait**.
