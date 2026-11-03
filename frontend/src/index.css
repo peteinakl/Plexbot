@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background-color: #0b0d12;
+    color: #f1f5f9;
+  }
+
+  h1, .font-serif-display {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+}
+
+/* Subtle custom scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #0f1219;
+}
+::-webkit-scrollbar-thumb {
+  background: #262d3d;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #384259;
+}
