@@ -344,7 +344,7 @@ async def curate_with_llm(
                             srcs = []
                             for s in conn.execute(
                                 """
-                                SELECT ms.*, sv.name AS server_name, sv.owned, sv.owner_name, sv.online, sv.latency_ms
+                                SELECT ms.*, sv.name AS server_name, sv.owned, sv.owner_name, sv.online, sv.latency_ms, sv.source_type
                                 FROM media_sources ms
                                 JOIN servers sv ON sv.machine_id = ms.machine_id
                                 WHERE ms.media_id = ? AND sv.enabled = 1
@@ -352,7 +352,10 @@ async def curate_with_llm(
                                 (mid,),
                             ).fetchall():
                                 sd = dict(s)
-                                sd["deep_link"] = build_plex_deep_link(sd["machine_id"], sd["rating_key"])
+                                if (sd.get("source_type") or "plex") == "streaming":
+                                    sd["deep_link"] = sd.get("external_url") or f"/api/netflix/open/{mid}"
+                                else:
+                                    sd["deep_link"] = build_plex_deep_link(sd["machine_id"], sd["rating_key"])
                                 srcs.append(sd)
 
                         hydrated = hydrate_media_row(mrow, sources=srcs, feedback_sentiment=None)

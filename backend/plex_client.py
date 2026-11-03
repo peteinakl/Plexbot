@@ -758,7 +758,11 @@ async def sync_all_servers(on_complete_hook: Any | None = None) -> dict[str, Any
 
             # Recompute cross-server aggregated watch state, abandonment, and watchlist status
             all_media = conn.execute(
-                "SELECT id, media_type, discover_rating_key FROM media_items"
+                """
+                SELECT id, media_type, discover_rating_key,
+                       netflix_watched_count, netflix_abandoned, netflix_last_viewed_at
+                FROM media_items
+                """
             ).fetchall()
 
             src_grouped: dict[int, list[sqlite3.Row]] = {}
@@ -769,13 +773,21 @@ async def sync_all_servers(on_complete_hook: Any | None = None) -> dict[str, Any
                 mid_int = int(mrow["id"])
                 mtype = mrow["media_type"]
                 drk = mrow["discover_rating_key"]
+                nf_cnt = int(mrow["netflix_watched_count"] or 0)
+                nf_aband = int(mrow["netflix_abandoned"] or 0)
+                nf_lv = int(mrow["netflix_last_viewed_at"]) if mrow["netflix_last_viewed_at"] else None
                 srcs = src_grouped.get(mid_int, [])
 
                 if not srcs:
                     on_wl = 1 if (drk and drk in watchlist_keys) else 0
                     conn.execute(
-                        "UPDATE media_items SET on_watchlist = ?, is_external_only = 1 WHERE id = ?",
-                        (on_wl, mid_int),
+                        """
+                        UPDATE media_items
+                        SET on_watchlist = ?, is_external_only = 1,
+                            is_watched = CASE WHEN ? > 0 THEN 1 ELSE is_watched END
+                        WHERE id = ?
+                        """,
+                        (on_wl, nf_cnt, mid_int),
                     )
                     continue
 
@@ -785,6 +797,8 @@ async def sync_all_servers(on_complete_hook: Any | None = None) -> dict[str, Any
                 max_leaves = max(int(s["leaf_count"] or 0) for s in srcs)
                 max_viewed_leaves = max(int(s["viewed_leaf_count"] or 0) for s in srcs)
                 lvs = [int(s["last_viewed_at"]) for s in srcs if s["last_viewed_at"]]
+                if nf_lv:
+                    lvs.append(nf_lv)
                 last_viewed = max(lvs) if lvs else None
                 adds = [int(s["added_at"]) for s in srcs if s["added_at"]]
                 latest_added = max(adds) if adds else None
@@ -796,27 +810,28 @@ async def sync_all_servers(on_complete_hook: Any | None = None) -> dict[str, Any
                     if dur > 0 and off > 0:
                         max_prog = max(max_prog, min(1.0, off / dur))
 
-                is_watched = 0
+                is_watched = 1 if nf_cnt > 0 else 0
                 is_abandoned = 0
                 if mtype == "movie":
-                    if max_vc >= 1:
+                    if max_vc >= 1 or nf_cnt >= 1:
                         is_watched = 1
                     elif 0.08 <= max_prog <= 0.72 and last_viewed and last_viewed < abandoned_cutoff:
                         is_watched = 1
                         is_abandoned = 1
                 else:
+                    eff_viewed = max(max_viewed_leaves, nf_cnt)
                     if max_leaves > 0:
-                        ep_ratio = max_viewed_leaves / max_leaves
+                        ep_ratio = eff_viewed / max_leaves
                     else:
                         ep_ratio = 0.0
-                    if max_vc >= 1 or max_viewed_leaves >= 3 or ep_ratio >= 0.35:
+                    if max_vc >= 1 or eff_viewed >= 3 or ep_ratio >= 0.35:
                         is_watched = 1
                     elif (
-                        max_viewed_leaves in (1, 2)
+                        eff_viewed in (1, 2)
                         and ep_ratio <= 0.25
                         and last_viewed
                         and last_viewed < abandoned_cutoff
-                    ):
+                    ) or (nf_aband == 1 and max_viewed_leaves < 3):
                         is_watched = 1
                         is_abandoned = 1
                     max_prog = max(max_prog, min(1.0, ep_ratio))
@@ -853,9 +868,18 @@ async def sync_all_servers(on_complete_hook: Any | None = None) -> dict[str, Any
                     ),
                 )
 
+        # Also sync Netflix catalog if enabled
+        SYNC_STATE.phase = "netflix"
+        SYNC_STATE.message = "Indexing regional Netflix catalog..."
+        from .netflix_service import sync_netflix_catalog
+        nf_stats = await sync_netflix_catalog(watchlist_keys=watchlist_keys)
+        nf_total = int(nf_stats.get("total") or 0)
+        SYNC_STATE.items_indexed += nf_total
+
         set_setting("last_sync_at", str(now_ts))
         SYNC_STATE.phase = "done"
-        SYNC_STATE.message = f"Synced {SYNC_STATE.items_indexed:,} items across {len(active_servers)} Plex server(s)."
+        nf_suffix = f" + {nf_total:,} Netflix titles" if nf_total else ""
+        SYNC_STATE.message = f"Synced {SYNC_STATE.items_indexed:,} items ({len(active_servers)} Plex server(s){nf_suffix})."
         SYNC_STATE.finished_at = int(time.time())
         if on_complete_hook:
             on_complete_hook()

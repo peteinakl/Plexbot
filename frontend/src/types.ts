@@ -26,6 +26,7 @@ export interface PlexServerInfo {
   movie_count: number;
   show_count: number;
   last_synced_at: number | null;
+  source_type?: 'plex' | 'streaming';
 }
 
 export interface SyncServerDetail {
@@ -67,6 +68,28 @@ export interface LLMConfigStatus {
   openai_model: string;
 }
 
+export interface NetflixStatus {
+  enabled: boolean;
+  watch_region: string;
+  has_tmdb_key: boolean;
+  tmdb_key_masked: string;
+  movie_count: number;
+  show_count: number;
+  last_synced_at: number | null;
+  history_imported_count: number;
+}
+
+export interface NetflixImportResult {
+  rows_parsed: number;
+  unique_titles: number;
+  matched_existing: number;
+  newly_enriched: number;
+  movies_marked: number;
+  shows_marked: number;
+  abandoned_detected: number;
+  profiles_seen?: string[];
+}
+
 export interface AppStatus {
   authenticated: boolean;
   user: PlexUser | null;
@@ -74,6 +97,7 @@ export interface AppStatus {
   sync: SyncStatus;
   profiles: Profile[];
   servers: PlexServerInfo[];
+  netflix: NetflixStatus;
   stats: {
     total_items: number;
     total_movies: number;
@@ -100,6 +124,7 @@ export interface MediaSource {
   owner_name: string;
   online: number;
   latency_ms: number;
+  source_type?: 'plex' | 'streaming';
   deep_link: string;
 }
 

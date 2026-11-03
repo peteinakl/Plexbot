@@ -29,7 +29,7 @@ export const App: React.FC = () => {
   // Filter state
   const [mood, setMood] = useState<string>('all');
   const [mediaType, setMediaType] = useState<string>('all');
-  const [sourceScope, setSourceScope] = useState<string>('plex_all');
+  const [sourceScope, setSourceScope] = useState<string>('all_playable');
   const [includeOutside, setIncludeOutside] = useState<boolean>(false);
   const [discoveryLevel, setDiscoveryLevel] = useState<number>(0.35);
   const [decade, setDecade] = useState<string>('');
@@ -250,8 +250,10 @@ export const App: React.FC = () => {
     return <AuthConnect onAuthenticated={refreshStatus} />;
   }
 
-  const enabledServers = status.servers.filter((s) => s.enabled);
+  const enabledServers = status.servers.filter((s) => s.enabled && (s.source_type || 'plex') === 'plex');
   const sharedServersCount = enabledServers.filter((s) => !s.owned).length;
+  const netflixIndexedCount =
+    (status.netflix?.movie_count || 0) + (status.netflix?.show_count || 0);
 
   return (
     <div className="min-h-screen bg-[#0b0d12] text-slate-100 flex flex-col">
@@ -274,6 +276,7 @@ export const App: React.FC = () => {
                   {status.stats.total_movies.toLocaleString()} movies ·{' '}
                   {status.stats.total_shows.toLocaleString()} shows
                   {sharedServersCount > 0 ? ` · +${sharedServersCount} shared` : ''}
+                  {status.netflix?.enabled && netflixIndexedCount > 0 ? ' · +Netflix' : ''}
                 </div>
               </div>
             </div>
@@ -497,7 +500,9 @@ export const App: React.FC = () => {
                     onChange={(e) => setSourceScope(e.target.value)}
                     className="px-2.5 py-1.5 rounded-lg bg-[#0b0d12] border border-slate-800 text-slate-200 focus:outline-none"
                   >
-                    <option value="plex_all">All Plex (Local + Shared)</option>
+                    <option value="all_playable">All Sources (Plex + Netflix)</option>
+                    <option value="netflix_only">Netflix Only</option>
+                    <option value="plex_all">Plex Only (Local + Shared)</option>
                     <option value="local_only">My Local Server Only</option>
                     <option value="shared_only">Friends&apos; Shared Servers Only</option>
                   </select>

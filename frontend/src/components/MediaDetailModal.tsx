@@ -245,19 +245,25 @@ export const MediaDetailModal: React.FC<Props> = ({
                   href={item.primary_source.deep_link}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-sm inline-flex items-center gap-2 transition"
+                  className={`py-2.5 px-4 rounded-xl font-semibold text-sm inline-flex items-center gap-2 transition ${
+                    item.primary_source.source_type === 'streaming'
+                      ? 'bg-red-600 hover:bg-red-500 text-white'
+                      : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'
+                  }`}
                 >
-                  Open in Plex ({item.primary_source.server_name})
+                  {item.primary_source.source_type === 'streaming'
+                    ? `Watch on ${item.primary_source.server_name}`
+                    : `Open in Plex (${item.primary_source.server_name})`}
                   <ExternalLink className="w-4 h-4" />
                 </a>
               )}
             </div>
 
-            {/* Available Servers List */}
+            {/* Available Sources List */}
             {item.sources.length > 0 && (
               <div className="mb-6">
                 <div className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
-                  Available Across {item.sources.length} Plex Server{item.sources.length > 1 ? 's' : ''}
+                  Available Across {item.sources.length} Source{item.sources.length > 1 ? 's' : ''}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {item.sources.map((src) => (
@@ -269,7 +275,9 @@ export const MediaDetailModal: React.FC<Props> = ({
                       className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-800 transition text-xs"
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        {src.owned ? (
+                        {src.source_type === 'streaming' ? (
+                          <span className="w-3.5 h-3.5 rounded-full bg-red-500 shrink-0" />
+                        ) : src.owned ? (
                           <HardDrive className="w-4 h-4 text-emerald-400 shrink-0" />
                         ) : (
                           <Users className="w-4 h-4 text-sky-400 shrink-0" />
@@ -277,7 +285,9 @@ export const MediaDetailModal: React.FC<Props> = ({
                         <div className="truncate">
                           <div className="font-medium text-slate-100 truncate">{src.server_name}</div>
                           <div className="text-[11px] text-slate-400 truncate">
-                            {src.section_title} · {src.owned ? 'Your Local Server' : `Shared by ${src.owner_name}`}
+                            {src.source_type === 'streaming'
+                              ? `${src.section_title} · Direct Stream`
+                              : `${src.section_title} · ${src.owned ? 'Your Local Server' : `Shared by ${src.owner_name}`}`}
                           </div>
                         </div>
                       </div>

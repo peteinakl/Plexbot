@@ -84,7 +84,12 @@ export const MediaCard: React.FC<Props> = ({
         {/* Availability badge (top-left) */}
         <div className="absolute top-2.5 left-2.5 right-16 flex flex-wrap gap-1">
           {primary ? (
-            primary.owned ? (
+            primary.source_type === 'streaming' ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-950/90 border border-red-500/45 text-red-200 text-[11px] font-semibold backdrop-blur-sm truncate max-w-full">
+                <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
+                <span className="truncate">{primary.server_name}</span>
+              </span>
+            ) : primary.owned ? (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-950/90 border border-emerald-500/40 text-emerald-300 text-[11px] font-medium backdrop-blur-sm truncate max-w-full">
                 <HardDrive className="w-3 h-3 shrink-0" />
                 <span className="truncate">Local{primary.resolution ? ` · ${primary.resolution}` : ''}</span>
@@ -101,7 +106,7 @@ export const MediaCard: React.FC<Props> = ({
           ) : (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-950/90 border border-violet-500/40 text-violet-200 text-[11px] font-medium backdrop-blur-sm">
               <Globe className="w-3 h-3 shrink-0" />
-              Outside Plex
+              Outside
             </span>
           )}
           {item.sources.length > 1 && (
@@ -241,10 +246,18 @@ export const MediaCard: React.FC<Props> = ({
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              title={`Open on ${primary.server_name} in Plex`}
-              className="py-1.5 px-2.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-300 text-xs font-medium inline-flex items-center gap-1 transition"
+              title={
+                primary.source_type === 'streaming'
+                  ? `Open "${item.title}" on ${primary.server_name}`
+                  : `Open on ${primary.server_name} in Plex`
+              }
+              className={`py-1.5 px-2.5 rounded-lg text-xs font-medium inline-flex items-center gap-1 transition ${
+                primary.source_type === 'streaming'
+                  ? 'bg-red-500/15 hover:bg-red-500/25 border border-red-500/40 text-red-200'
+                  : 'bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-300'
+              }`}
             >
-              Plex
+              {primary.source_type === 'streaming' ? primary.server_name : 'Plex'}
               <ExternalLink className="w-3 h-3" />
             </a>
           )}

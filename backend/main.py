@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -28,6 +28,13 @@ from .llm_curator import (
     generate_taste_portrait,
     get_active_llm_config,
     test_llm_connection,
+)
+from .netflix_service import (
+    NETFLIX_MACHINE_ID,
+    ensure_netflix_server_row,
+    import_netflix_viewing_csv,
+    resolve_netflix_watch_url,
+    sync_netflix_catalog,
 )
 from .plex_client import (
     SYNC_STATE,
@@ -113,7 +120,7 @@ class AICurateRequest(BaseModel):
     profile_id: str = "together"
     mood: str = "all"
     media_type: str = "all"
-    source_scope: str = "plex_all"
+    source_scope: str = "all_playable"
     include_outside: bool = False
     discovery_level: float = 0.35
     max_duration: int | None = None
@@ -128,6 +135,17 @@ class PortraitRequest(BaseModel):
     force_refresh: bool = False
 
 
+class NetflixSettingsRequest(BaseModel):
+    enabled: bool = True
+    watch_region: str = "NZ"
+    tmdb_api_key: str | None = None
+
+
+class NetflixCSVImportRequest(BaseModel):
+    csv_text: str
+    profile_filter: str | None = None
+
+
 def _mask_key(raw: str) -> str:
     if not raw or len(raw) < 8:
         return ""
@@ -136,6 +154,7 @@ def _mask_key(raw: str) -> str:
 
 @app.get("/api/status")
 async def api_status() -> dict[str, Any]:
+    nf_srv = ensure_netflix_server_row()
     s = get_all_settings()
     plex_token = s.get("plex_token", "")
     llm_cfg = get_active_llm_config()
@@ -156,8 +175,11 @@ async def api_status() -> dict[str, Any]:
                 "movie_count": r["movie_count"],
                 "show_count": r["show_count"],
                 "last_synced_at": r["last_synced_at"],
+                "source_type": r["source_type"] or "plex",
             }
-            for r in conn.execute("SELECT * FROM servers ORDER BY owned DESC, name ASC").fetchall()
+            for r in conn.execute(
+                "SELECT * FROM servers ORDER BY CASE WHEN source_type = 'plex' THEN 0 ELSE 1 END, owned DESC, name ASC"
+            ).fetchall()
         ]
         stats_row = conn.execute(
             """
@@ -166,7 +188,8 @@ async def api_status() -> dict[str, Any]:
                 SUM(CASE WHEN media_type = 'movie' AND is_external_only = 0 THEN 1 ELSE 0 END) AS total_movies,
                 SUM(CASE WHEN media_type = 'show' AND is_external_only = 0 THEN 1 ELSE 0 END) AS total_shows,
                 SUM(CASE WHEN is_watched = 1 THEN 1 ELSE 0 END) AS watched_count,
-                SUM(CASE WHEN on_watchlist = 1 THEN 1 ELSE 0 END) AS watchlist_count
+                SUM(CASE WHEN on_watchlist = 1 THEN 1 ELSE 0 END) AS watchlist_count,
+                SUM(CASE WHEN netflix_watched_count > 0 THEN 1 ELSE 0 END) AS netflix_history_count
             FROM media_items
             """
         ).fetchone()
@@ -185,6 +208,16 @@ async def api_status() -> dict[str, Any]:
         "sync": SYNC_STATE.to_dict(),
         "profiles": profiles,
         "servers": servers,
+        "netflix": {
+            "enabled": bool(nf_srv.get("enabled", 1)),
+            "watch_region": s.get("watch_region", "NZ") or "NZ",
+            "has_tmdb_key": bool(s.get("tmdb_api_key")),
+            "tmdb_key_masked": _mask_key(s.get("tmdb_api_key", "")),
+            "movie_count": int(nf_srv.get("movie_count") or 0),
+            "show_count": int(nf_srv.get("show_count") or 0),
+            "last_synced_at": nf_srv.get("last_synced_at"),
+            "history_imported_count": int(stats_row["netflix_history_count"] or 0),
+        },
         "stats": {
             "total_items": int(stats_row["total_items"] or 0),
             "total_movies": int(stats_row["total_movies"] or 0),
@@ -315,7 +348,7 @@ async def api_get_recommendations(
     profile_id: str = Query("together"),
     mood: str = Query("all"),
     media_type: str = Query("all"),
-    source_scope: str = Query("plex_all"),
+    source_scope: str = Query("all_playable"),
     include_outside: bool = Query(False),
     discovery_level: float = Query(0.35),
     max_duration: int | None = Query(None),
@@ -481,7 +514,7 @@ async def api_search_catalog(
             srcs = []
             for s in conn.execute(
                 """
-                SELECT ms.*, sv.name AS server_name, sv.owned, sv.owner_name, sv.online, sv.latency_ms
+                SELECT ms.*, sv.name AS server_name, sv.owned, sv.owner_name, sv.online, sv.latency_ms, sv.source_type
                 FROM media_sources ms
                 JOIN servers sv ON sv.machine_id = ms.machine_id
                 WHERE ms.media_id = ? AND sv.enabled = 1
@@ -489,7 +522,10 @@ async def api_search_catalog(
                 (mid,),
             ).fetchall():
                 sd = dict(s)
-                sd["deep_link"] = build_plex_deep_link(sd["machine_id"], sd["rating_key"])
+                if (sd.get("source_type") or "plex") == "streaming":
+                    sd["deep_link"] = sd.get("external_url") or f"/api/netflix/open/{mid}"
+                else:
+                    sd["deep_link"] = build_plex_deep_link(sd["machine_id"], sd["rating_key"])
                 srcs.append(sd)
             items.append(hydrate_media_row(r, sources=srcs, feedback_sentiment=fb_map.get(mid)))
 
@@ -573,6 +609,50 @@ async def api_test_llm(req: LLMTestRequest) -> dict[str, Any]:
         return await test_llm_connection(req.provider, key, model)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/netflix/settings")
+async def api_save_netflix_settings(req: NetflixSettingsRequest) -> dict[str, Any]:
+    ensure_netflix_server_row()
+    updates: dict[str, str] = {"watch_region": (req.watch_region or "NZ").strip().upper()}
+    if req.tmdb_api_key is not None and "•" not in req.tmdb_api_key:
+        updates["tmdb_api_key"] = req.tmdb_api_key.strip()
+    set_settings_bulk(updates)
+    with db_session() as conn:
+        conn.execute(
+            "UPDATE servers SET enabled = ? WHERE machine_id = ?",
+            (1 if req.enabled else 0, NETFLIX_MACHINE_ID),
+        )
+    res = await sync_netflix_catalog()
+    return {"ok": True, "sync": res}
+
+
+@app.post("/api/netflix/sync")
+async def api_sync_netflix() -> dict[str, Any]:
+    try:
+        return await sync_netflix_catalog()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Netflix catalog sync error: {exc}") from exc
+
+
+@app.post("/api/netflix/import-csv")
+async def api_import_netflix_csv(req: NetflixCSVImportRequest) -> dict[str, Any]:
+    try:
+        return await import_netflix_viewing_csv(
+            csv_text=req.csv_text,
+            profile_filter=req.profile_filter,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Netflix CSV import failed")
+        raise HTTPException(status_code=500, detail=f"CSV import failed: {exc}") from exc
+
+
+@app.get("/api/netflix/open/{media_id}")
+async def api_open_netflix(media_id: int) -> RedirectResponse:
+    url = await resolve_netflix_watch_url(media_id)
+    return RedirectResponse(url=url, status_code=302)
 
 
 @app.get("/api/poster/{media_id}")

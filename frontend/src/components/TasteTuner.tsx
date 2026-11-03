@@ -144,25 +144,34 @@ export const TasteTuner: React.FC<Props> = ({
               </p>
             </div>
 
-            <div className="inline-flex rounded-xl bg-slate-900 p-1 border border-slate-800">
+            <div className="flex items-center gap-2 flex-wrap">
               <button
                 type="button"
-                onClick={() => setMode('history')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
-                  mode === 'history' ? 'bg-amber-500 text-slate-950 font-semibold' : 'text-slate-300'
-                }`}
+                onClick={onOpenSettings}
+                className="px-3 py-1.5 rounded-xl bg-red-500/15 hover:bg-red-500/25 border border-red-500/35 text-red-200 text-xs font-medium transition cursor-pointer"
               >
-                Watched History
+                Import Netflix CSV
               </button>
-              <button
-                type="button"
-                onClick={() => setMode('catalog')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
-                  mode === 'catalog' ? 'bg-amber-500 text-slate-950 font-semibold' : 'text-slate-300'
-                }`}
-              >
-                Search All Libraries
-              </button>
+              <div className="inline-flex rounded-xl bg-slate-900 p-1 border border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setMode('history')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
+                    mode === 'history' ? 'bg-amber-500 text-slate-950 font-semibold' : 'text-slate-300'
+                  }`}
+                >
+                  Watched History
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode('catalog')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
+                    mode === 'catalog' ? 'bg-amber-500 text-slate-950 font-semibold' : 'text-slate-300'
+                  }`}
+                >
+                  Search All Libraries
+                </button>
+              </div>
             </div>
           </div>
 

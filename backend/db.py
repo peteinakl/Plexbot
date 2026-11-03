@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS servers (
     enabled INTEGER NOT NULL DEFAULT 1,
     movie_count INTEGER NOT NULL DEFAULT 0,
     show_count INTEGER NOT NULL DEFAULT 0,
-    last_synced_at INTEGER
+    last_synced_at INTEGER,
+    source_type TEXT NOT NULL DEFAULT 'plex'
 );
 
 CREATE TABLE IF NOT EXISTS media_items (
@@ -87,7 +88,10 @@ CREATE TABLE IF NOT EXISTS media_items (
     last_viewed_at INTEGER,
     latest_added_at INTEGER,
     on_watchlist INTEGER NOT NULL DEFAULT 0,
-    is_external_only INTEGER NOT NULL DEFAULT 0
+    is_external_only INTEGER NOT NULL DEFAULT 0,
+    netflix_watched_count INTEGER NOT NULL DEFAULT 0,
+    netflix_abandoned INTEGER NOT NULL DEFAULT 0,
+    netflix_last_viewed_at INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_media_type ON media_items(media_type);
@@ -113,6 +117,7 @@ CREATE TABLE IF NOT EXISTS media_sources (
     user_rating REAL,
     last_viewed_at INTEGER,
     added_at INTEGER,
+    external_url TEXT NOT NULL DEFAULT '',
     UNIQUE(machine_id, rating_key)
 );
 
@@ -185,10 +190,30 @@ def db_session(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    """Safely upgrade existing SQLite databases with newly added columns."""
+    srv_cols = {r["name"] for r in conn.execute("PRAGMA table_info(servers)").fetchall()}
+    if "source_type" not in srv_cols:
+        conn.execute("ALTER TABLE servers ADD COLUMN source_type TEXT NOT NULL DEFAULT 'plex'")
+
+    mi_cols = {r["name"] for r in conn.execute("PRAGMA table_info(media_items)").fetchall()}
+    if "netflix_watched_count" not in mi_cols:
+        conn.execute("ALTER TABLE media_items ADD COLUMN netflix_watched_count INTEGER NOT NULL DEFAULT 0")
+    if "netflix_abandoned" not in mi_cols:
+        conn.execute("ALTER TABLE media_items ADD COLUMN netflix_abandoned INTEGER NOT NULL DEFAULT 0")
+    if "netflix_last_viewed_at" not in mi_cols:
+        conn.execute("ALTER TABLE media_items ADD COLUMN netflix_last_viewed_at INTEGER")
+
+    ms_cols = {r["name"] for r in conn.execute("PRAGMA table_info(media_sources)").fetchall()}
+    if "external_url" not in ms_cols:
+        conn.execute("ALTER TABLE media_sources ADD COLUMN external_url TEXT NOT NULL DEFAULT ''")
+
+
 def init_db(db_path: Path | None = None) -> None:
     target = db_path or DB_PATH
     with db_session(target) as conn:
         conn.executescript(SCHEMA_SQL)
+        _apply_migrations(conn)
         now = int(time.time())
         for pid, name, icon, desc, inherit in DEFAULT_PROFILES:
             conn.execute(
@@ -198,6 +223,23 @@ def init_db(db_path: Path | None = None) -> None:
                 """,
                 (pid, name, icon, desc, inherit, now),
             )
+        # Ensure Netflix streaming source row exists
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO servers (
+                machine_id, name, owned, owner_name, base_url, access_token,
+                is_local_conn, is_relay, latency_ms, online, enabled, source_type
+            ) VALUES (
+                'provider:netflix', 'Netflix', 0, 'Streaming Subscription',
+                'https://www.netflix.com', '', 0, 0, 20, 1, 1, 'streaming'
+            )
+            """
+        )
+        # Ensure default watch region (NZ)
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+            ("watch_region", os.environ.get("PLEXBOT_WATCH_REGION", "NZ"), now),
+        )
         # Ensure persistent Plex client identifier
         row = conn.execute("SELECT value FROM settings WHERE key = 'plex_client_id'").fetchone()
         if not row:
@@ -211,6 +253,7 @@ def init_db(db_path: Path | None = None) -> None:
             "gemini_api_key": os.environ.get("GEMINI_API_KEY", ""),
             "anthropic_api_key": os.environ.get("ANTHROPIC_API_KEY", ""),
             "openai_api_key": os.environ.get("OPENAI_API_KEY", ""),
+            "tmdb_api_key": os.environ.get("TMDB_API_KEY", ""),
         }
         for key, val in env_defaults.items():
             if val:
@@ -288,14 +331,18 @@ def hydrate_media_row(
     row: sqlite3.Row | dict[str, Any],
     sources: list[dict[str, Any]] | None = None,
     feedback_sentiment: str | None = None,
+    prefer_streaming: bool = False,
 ) -> dict[str, Any]:
     d = dict(row)
     src_list = sources or []
-    # Sort sources: owned local servers first, then highest resolution, then lowest latency
-    res_rank = {"4K": 4, "1080p": 3, "720p": 2, "SD": 1, "": 0}
+    # Sort sources: owned local Plex first, then shared Plex servers, then streaming services (Netflix)
+    res_rank = {"4K": 4, "1080p": 3, "HD": 2, "720p": 2, "SD": 1, "": 0}
     src_list_sorted = sorted(
         src_list,
         key=lambda s: (
+            (1 if s.get("source_type") == "streaming" else 0)
+            if prefer_streaming
+            else (1 if s.get("source_type", "plex") == "plex" else 0),
             int(s.get("owned", 0)),
             res_rank.get(s.get("resolution", ""), 0),
             -int(s.get("latency_ms", 9999)),
@@ -340,6 +387,8 @@ def hydrate_media_row(
         "latest_added_at": d.get("latest_added_at"),
         "on_watchlist": bool(d.get("on_watchlist")),
         "is_external_only": bool(d.get("is_external_only")),
+        "netflix_watched_count": int(d.get("netflix_watched_count") or 0),
+        "netflix_abandoned": bool(d.get("netflix_abandoned")),
         "sources": src_list_sorted,
         "primary_source": primary_source,
         "feedback": feedback_sentiment,

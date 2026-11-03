@@ -1,6 +1,7 @@
 import {
   AppStatus,
   MediaItem,
+  NetflixImportResult,
   Profile,
   RecommendationResponse,
   Sentiment,
@@ -175,5 +176,30 @@ export const api = {
     request<{ ok: boolean; message: string }>('/api/settings/llm/test', {
       method: 'POST',
       body: JSON.stringify({ provider, api_key: apiKey, model }),
+    }),
+
+  syncNetflix: () =>
+    request<{ enabled: boolean; region: string; movies: number; shows: number; total: number }>(
+      '/api/netflix/sync',
+      { method: 'POST' }
+    ),
+
+  saveNetflixSettings: (body: {
+    enabled: boolean;
+    watch_region: string;
+    tmdb_api_key?: string;
+  }) =>
+    request<{ ok: boolean }>('/api/netflix/settings', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  importNetflixCSV: (csvText: string, profileFilter?: string) =>
+    request<NetflixImportResult>('/api/netflix/import-csv', {
+      method: 'POST',
+      body: JSON.stringify({
+        csv_text: csvText,
+        profile_filter: profileFilter || null,
+      }),
     }),
 };

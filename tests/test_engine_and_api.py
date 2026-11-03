@@ -320,10 +320,9 @@ def test_household_profile_blending_and_api(temp_db: Path):
     status = client.get("/api/status").json()
     assert status["authenticated"] is True
     assert status["stats"]["total_movies"] == 6
-    assert len(status["servers"]) == 2
+    assert len(status["servers"]) == 3  # 2 Plex servers + Netflix source
 
-    # Search Prisoners and mark 'dislike' on 'partner' profile -> verify 'together' demotes it,
-    # while 'me' still gets Prisoners #1!
+    # Search Arrival and mark 'dislike' on 'partner' profile
     search_res = client.get("/api/catalog/search?q=Arrival&profile_id=partner").json()
     arrival_id = search_res["items"][0]["id"]
 
@@ -347,3 +346,70 @@ def test_household_profile_blending_and_api(temp_db: Path):
 
     hist = client.get("/api/history?profile_id=partner&filter_mode=disliked").json()
     assert hist["counts"]["disliked"] == 2
+
+
+def test_netflix_source_scoping_and_csv_import(temp_db: Path):
+    _seed_sample_catalog(temp_db)
+    # Add a Netflix-only title (Roma) into the DB
+    with db_mod.db_session(temp_db) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO media_items (
+                canonical_key, media_type, plex_guid, discover_rating_key, title, year,
+                duration_min, critic_rating, audience_rating, genres_json, directors_json,
+                summary, is_watched, is_external_only
+            ) VALUES (
+                'plex:movie:rk_roma', 'movie', 'plex://movie/rk_roma', 'rk_roma', 'Roma', 2018,
+                135, 9.6, 8.1, '["Drama"]', '["Alfonso Cuarón"]',
+                'A vivid portrait of domestic life in 1970s Mexico City.', 0, 0
+            )
+            """
+        )
+        roma_id = int(cur.lastrowid)
+        conn.execute(
+            """
+            INSERT INTO media_sources (
+                media_id, machine_id, rating_key, section_id, section_title, resolution
+            ) VALUES (?, 'provider:netflix', 'nf:rk_roma', 'netflix', 'Netflix (NZ)', 'HD')
+            """,
+            (roma_id,),
+        )
+
+    client = TestClient(main_mod.app)
+
+    # 1. Netflix-only scope returns only Roma with streaming source_type
+    nf_only = client.get("/api/recommendations?source_scope=netflix_only").json()["items"]
+    assert [it["title"] for it in nf_only] == ["Roma"]
+    assert nf_only[0]["primary_source"]["source_type"] == "streaming"
+
+    # 2. Plex-only scope excludes Netflix-only Roma
+    plex_only = client.get("/api/recommendations?source_scope=plex_all").json()["items"]
+    assert "Roma" not in [it["title"] for it in plex_only]
+
+    # 3. All playable includes both Prisoners (Plex) and Roma (Netflix)
+    all_play = client.get("/api/recommendations?source_scope=all_playable").json()["items"]
+    all_titles = [it["title"] for it in all_play]
+    assert "Prisoners" in all_titles and "Roma" in all_titles
+
+    # 4. Import NetflixViewingActivity.csv marking Prisoners & Roma watched + rolling up a show
+    # Clear plex_token temporarily so unit test doesn't make live external HTTP calls for unmatched shows
+    db_mod.set_setting("plex_token", "", db_path=temp_db)
+    csv_payload = (
+        '\ufeffTitle,Date\n'
+        '"Prisoners","14/09/25"\n'
+        '"Roma","10/08/25"\n'
+        '"Dark: Season 1: Secrets","01/07/25"\n'
+        '"Dark: Season 1: Lies","02/07/25"\n'
+        '"Dark: Season 1: Past and Present","03/07/25"\n'
+    )
+    imp = client.post("/api/netflix/import-csv", json={"csv_text": csv_payload}).json()
+    assert imp["rows_parsed"] == 5
+    assert imp["unique_titles"] == 3  # Prisoners, Roma, and rolled-up Dark!
+    assert imp["movies_marked"] == 2
+
+    # Restore token & verify Prisoners and Roma are no longer recommended as unwatched!
+    db_mod.set_setting("plex_token", "test-token", db_path=temp_db)
+    after_recs = client.get("/api/recommendations?source_scope=all_playable").json()["items"]
+    after_titles = [it["title"] for it in after_recs]
+    assert "Prisoners" not in after_titles
+    assert "Roma" not in after_titles

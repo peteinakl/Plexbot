@@ -234,6 +234,8 @@ def compute_item_signal_weight(
             return -1.55, f"Low Plex Rating ({ur_f:.0f}/10)"
 
     if row.get("is_abandoned"):
+        if int(row.get("netflix_abandoned") or 0) == 1 and int(row.get("max_view_count") or 0) == 0:
+            return -0.85, "Netflix · Abandoned"
         return -0.85, "Abandoned partway"
 
     recency_bonus = 0.0
@@ -241,24 +243,28 @@ def compute_item_signal_weight(
     if lv and (now_ts - int(lv)) < 180 * 86400:
         recency_bonus = 0.15
 
+    nf_cnt = int(row.get("netflix_watched_count") or 0)
+    plex_vc = int(row.get("max_view_count") or 0)
+    src_prefix = "Netflix · " if (nf_cnt > 0 and plex_vc == 0 and int(row.get("viewed_leaf_count") or 0) == 0) else ""
+
     if row.get("media_type") == "movie":
-        vc = int(row.get("max_view_count") or 0)
+        vc = max(plex_vc, nf_cnt)
         if vc >= 3:
-            return 1.90 + recency_bonus, f"Rewatched {vc}x"
+            return 1.90 + recency_bonus, f"{src_prefix}Rewatched {vc}x"
         if vc == 2:
-            return 1.45 + recency_bonus, "Rewatched 2x"
+            return 1.45 + recency_bonus, f"{src_prefix}Rewatched 2x"
         if vc == 1:
-            return 0.82 + recency_bonus, "Watched"
+            return 0.82 + recency_bonus, f"{src_prefix}Watched"
     else:
         leaves = int(row.get("leaf_count") or 0)
-        viewed = int(row.get("viewed_leaf_count") or 0)
+        viewed = max(int(row.get("viewed_leaf_count") or 0), nf_cnt)
         ratio = (viewed / leaves) if leaves > 0 else 0.0
         if (leaves >= 4 and ratio >= 0.85) or viewed >= 16:
-            return 1.65 + recency_bonus, f"Completed {viewed} eps"
+            return 1.65 + recency_bonus, f"{src_prefix}Completed {viewed} eps"
         if ratio >= 0.50 or viewed >= 6:
-            return 1.12 + recency_bonus, f"Watched {viewed} eps"
-        if viewed >= 3 or int(row.get("max_view_count") or 0) >= 1:
-            return 0.70 + recency_bonus, "Watched"
+            return 1.12 + recency_bonus, f"{src_prefix}Watched {viewed} eps"
+        if viewed >= 2 or plex_vc >= 1:
+            return 0.70 + recency_bonus, f"{src_prefix}Watched"
 
     return 0.0, ""
 
@@ -378,7 +384,11 @@ class RecommendationEngine:
                 sd["owner_name"] = srv["owner_name"]
                 sd["online"] = int(srv["online"])
                 sd["latency_ms"] = int(srv["latency_ms"])
-                sd["deep_link"] = build_plex_deep_link(sd["machine_id"], sd["rating_key"])
+                sd["source_type"] = srv.get("source_type") or "plex"
+                if sd["source_type"] == "streaming":
+                    sd["deep_link"] = sd.get("external_url") or f"/api/netflix/open/{sd['media_id']}"
+                else:
+                    sd["deep_link"] = build_plex_deep_link(sd["machine_id"], sd["rating_key"])
                 sources_by_media[int(sd["media_id"])].append(sd)
 
             feedback_by_profile: dict[str, dict[int, str]] = defaultdict(dict)
@@ -522,7 +532,7 @@ class RecommendationEngine:
         profile_id: str = "together",
         mood: str = "all",
         media_type: str = "all",
-        source_scope: str = "plex_all",
+        source_scope: str = "all_playable",
         include_outside: bool = False,
         discovery_level: float = 0.35,
         max_duration: int | None = None,
@@ -580,11 +590,33 @@ class RecommendationEngine:
             if is_ext and not include_outside:
                 continue
             if not is_ext:
-                if source_scope == "local_only" and not any(s["owned"] == 1 for s in sources):
+                if source_scope == "plex_all" and not any(
+                    s.get("source_type", "plex") == "plex" for s in sources
+                ):
                     continue
-                if source_scope == "shared_only" and not any(s["owned"] == 0 for s in sources):
+                if source_scope == "netflix_only" and not any(
+                    s.get("machine_id") == "provider:netflix" for s in sources
+                ):
                     continue
-            elif source_scope in ("local_only", "shared_only") and not include_outside:
+                if source_scope == "local_only" and not any(
+                    s.get("source_type", "plex") == "plex" and s["owned"] == 1 for s in sources
+                ):
+                    continue
+                if source_scope == "shared_only" and not any(
+                    s.get("source_type", "plex") == "plex" and s["owned"] == 0 for s in sources
+                ):
+                    continue
+
+                # Filter item's displayed primary_source to match strict scope when requested
+                if source_scope == "netflix_only":
+                    sources = [s for s in sources if s.get("machine_id") == "provider:netflix"] + [
+                        s for s in sources if s.get("machine_id") != "provider:netflix"
+                    ]
+                elif source_scope == "plex_all":
+                    sources = [s for s in sources if s.get("source_type", "plex") == "plex"] + [
+                        s for s in sources if s.get("source_type", "plex") != "plex"
+                    ]
+            elif source_scope in ("local_only", "shared_only", "plex_all", "netflix_only") and not include_outside:
                 continue
 
             dur = row.get("duration_min")
@@ -732,7 +764,12 @@ class RecommendationEngine:
         results: list[dict[str, Any]] = []
         for idx, entry in enumerate(selected):
             row = entry["row"]
-            hydrated = hydrate_media_row(row, sources=entry["sources"], feedback_sentiment=None)
+            hydrated = hydrate_media_row(
+                row,
+                sources=entry["sources"],
+                feedback_sentiment=None,
+                prefer_streaming=(source_scope == "netflix_only"),
+            )
             rel = (entry["raw_score"] - bot_s) / span
             match_pct = int(round(max(62.0, min(98.0, 72.0 + 26.0 * rel - idx * 0.12))))
             because = entry["because_titles"]
